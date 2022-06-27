@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+        canvas {
+            border: 1px solid #d3d3d3;
+            background-color: #f1f1f1;
+            padding-left: 0;
+            padding-right: 0;
+            margin-left: auto;
+            margin-right: auto;
+            display: block;
+            width: 800px;
+        }
+
+        #button-container {
+            text-align: center;
+            padding-left: 0;
+            padding-right: 0;
+            margin-left: auto;
+            margin-right: auto;
+            margin-top: 10px;
+            display: block;
+        }
+
+        .control-button {
+            height: 45px;
+            width: 150px;
+        }
+    </style>
+</head>
+
+<body onload="handleGame()">
+    <script>
+        const canvasWidth = 800,
+            canvasHeight = 600,
+            mDBName = "the_name",
+            mDBStoreName = "MyObjectStore",
+            mDBVersion = 1;
+
+        const constants = {
+            keyLeft: 37,
+            keyRight: 39,
+            paddleSpeed: 8,
+            paddleWidth: 200,
+            paddleHeight: 20,
+            paddleStartX: 350,
+            paddleStartY: 575,
+            paddleColor: 'red',
+            ballRadius: 10,
+            ballX: 400,
+            ballY: 300,
+            ballXSpeed: 2,
+            ballYSpeed: 2,
+            ballColor: 'blue',
+            blockWidth: 49,
+            blockHeight: 30,
+            ballShadows: 7,
+            rowShift: 40
+        }
+
+        const bonusTypes = new Map([
+            [1, 'doublePoints'],
+            [2, 'pentaPoints'],
+            [3, 'growPlatform'],
+            [4, 'shrinkPlatform'],
+            [5, 'reverseMovement']
+        ]);
+
+        const bonusLabels = new Map([
+            ['doublePoints', 'x2'],
+            ['pentaPoints', 'x5'],
+            ['growPlatform', '<+>'],
+            ['shrinkPlatform', '<->'],
+            ['reverseMovement', '><']
+        ]);
+
+        var paddle = null;
+        var balls = [];
+        var obstacles = [];
+        var bonuses = [];
+        var gameMode = 0;
+        var scoreBoard;
+        var gameStopped = true;
+        var ballCached = false;
+        var maxBallCatches = 3;
+        var interval;
+        var score = 0;
+        var startTime = 0;
+        var bBlocksCount = 0;
+        var slideInterval;
+        var scoreModifier = 1;
+        var reverseMoves = false;
+        var paddleModiferTimeout;
+        var boardImg = new Image();
+        boardImg.src = 'paddle.png';
+
+        var blockImg = new Image();
+        blockImg.src = 'block.png';
+
+        var ballImg = new Image();
+        ballImg.src = 'ball.png';
+
+        var backgroundImg = new Image();
+        backgroundImg.src = 'background.jpg';
+
+        var bonusImg = new Image();
+        bonusImg.src = 'bonus.png';
+
+        document.onkeydown = checkKey;
+        document.onkeyup = clearmove;
+
+        function checkKey(e) {
+            e = e || window.event;
+            if (!reverseMoves ? e.keyCode === constants.keyLeft : e.keyCode === constants.keyRight) {
+                moveleft();
+            }
+            else if (!reverseMoves ? e.keyCode === constants.keyRight : e.keyCode === constants.keyLeft) {
+                moveright();
+            }
+        }
+
+        function handleGame() {
+            startGame();
+            myGameArea.stop();
+        }
+
+        function startGame(id) {
+            if (id) {
+                gameMode = id === 'stopGame' ? 1 : 2;
+                startTime = new Date();
+            } else {
+                gameMode = 0;
+            }
+            balls = [];
+            paddle = new paddleComponent(constants.paddleWidth, constants.paddleHeight, constants.paddleColor, constants.paddleStartX, constants.paddleStartY);
+            balls.push(new ballComponent(constants.ballRadius, constants.ballXSpeed, constants.ballYSpeed, constants.ballX, constants.ballY, constants.ballColor, true));
+            obstacles = getNewObstacles();
+            bonuses = [];
+            scoreBoard = new scoreComponent(0, 0, 'black', 650, 550);
+            myGameArea.start();
+        }
+
+        function stopGame() {
+            let name = prompt('Game over\nWhat is your name?');
+            gameMode = 0;
+            document.getElementById('stopGame').innerHTML = 'START INFINITE';
+            document.getElementById('stopGame').disabled = false;
+            document.getElementById('stopGame1').innerHTML = 'START SLIDE';
+            document.getElementById('stopGame1').disabled = false;
+            myGameArea.stop();
+            clearInterval(interval);
+            clearInterval(slideInterval);
+            paddle = null;
+            balls = [];
+            scoreBoard = null;
+            obstacles = [];
+            bonuses = [];
+            bBlocksCount = 0;
+            if (name) {
+                saveScore(name, score, (new Date() - startTime) / 1000);
+                alertScoresFromDatabase();
+            }
+            score = 0;
+        }
+
+        function saveScore(nick, points, gameTime) {
+            if (!indexedDB) {
+                console.log("IndexedDB unsupported!");
+            }
+            let request = indexedDB.open(mDBName, mDBVersion);
+            request.onupgradeneeded = (e) => {
+                console.log('open upgrade required, oldVersion: ' + e.oldVersion + ' newVersion: ' + e.newVersion);
+                request.result.createObjectStore(mDBStoreName, { autoIncrement: true });
+            };
+
+            const today = new Date(),
+                date = today.getFullYear() + '-' + (today.getMonth() + 1) + '-' + today.getDate(),
+                time = today.getHours() + ":" + today.getMinutes() + ":" + today.getSeconds(),
+                dateTime = date + ' ' + time;
+
+            request.onerror = event => {
+                console.log("Error occured.");
+            };
+
+            request.onsuccess = event => {
+                let db = event.target.result,
+                    tx = db.transaction([mDBStoreName], "readwrite"),
+                    store = tx.objectStore(mDBStoreName);
+                store.put({ name: nick, date: dateTime, points: points, gameTime: gameTime });
+            }
+        }
+
+        function alertScoresFromDatabase() {
+            let request = window.indexedDB.open(mDBName, mDBVersion);
+            request.onsuccess = event => {
+                const db = event.target.result,
+                    tx = db.transaction([mDBStoreName], "readonly"),
+                    store = tx.objectStore(mDBStoreName);
+                store.getAll().onsuccess = (event) => {
+                    console.log(event.target.result);
+                    alert(JSON.stringify(event.target.result, undefined, 4));
+                };
+            }
+        }
+
+        var myGameArea = {
+            canvas: document.createElement("canvas"),
+            start: function () {
+                this.canvas.width = 800;
+                this.canvas.height = 600;
+                this.context = this.canvas.getContext("2d");
+                document.getElementById('canvas-container').appendChild(this.canvas);
+                interval = setInterval(updateGameArea, 10);
+                if (gameMode === 2) {
+                    slideInterval = setInterval(() => {
+                        obstacles.forEach(obstacle => {
+                            obstacle.y += constants.rowShift;
+                        });
+                        let row = generateObstacleRow(0);
+                        row.forEach(element => {
+                            obstacles.push(element);
+                            if (element.y > canvasHeight - 50) {
+                                stopGame();
+                            }
+                        });
+                    }, 10000);
+                }
+            },
+            clear: function () {
+                this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                this.context.drawImage(backgroundImg, 0, 0);
+            },
+            stop: function () {
+                clearInterval(interval);
+                this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                balls = [];
+                obstacles = [];
+            }
+        }
+
+        myGameArea.canvas.style.textAlign = 'center;'
+
+        function paddleComponent(width, height, color, x, y) {
+            this.width = width;
+            this.height = height;
+            this.speedX = 0;
+            this.ySpeed = 0;
+            this.x = x;
+            this.y = y;
+            this.update = function () {
+                ctx = myGameArea.context;
+                ctx.fillStyle = color;
+                ctx.drawImage(boardImg, this.x, this.y, this.width, this.height = height);
+            }
+            this.newPos = function () {
+                this.x += this.speedX;
+                if (this.x <= 0) {
+                    this.x = 0;
+                } else if (this.x >= canvasWidth - constants.paddleWidth) {
+                    this.x = canvasWidth - constants.paddleWidth;
+                }
+                this.y += this.ySpeed;
+            }
+        }
+
+        function ballComponent(radius, xSpeed, ySpeed, x, y, color, force = false) {
+            this.id = Math.floor(Math.random() * 100000) + 1;
+            this.radius = radius;
+            this.xSpeed = force ? 0 : Math.floor(Math.random() * (2 - 0 + 1)) + 0.5;
+            this.ySpeed = force ? 2 : Math.floor(Math.random() * (2 - 0 + 1)) + 0.5;
+            this.x = x;
+            this.y = y;
+            this.collisionProtection = false;
+            this.update = function () {
+                ctx = myGameArea.context;
+                ctx.fillStyle = "#e0ffff";
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, 2 * Math.PI);
+                ctx.closePath();
+                ctx.fill();
+                for (let i = 1; i <= constants.ballShadows; i++) {
+                    ctx.globalAlpha = 1 - (i / constants.ballShadows);
+                    ctx.beginPath();
+                    ctx.arc(this.x - i * this.xSpeed, this.y - i * this.ySpeed, this.radius, 0, 2 * Math.PI);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+            }
+            this.newPos = function () {
+                if (!(this.x == 0 && this.xSpeed < 0 ||
+                    this.x + this.radius == canvasWidth && this.xSpeed > 0)) {
+                    this.x += this.xSpeed;
+                }
+                if (!(this.y == 0 && this.ySpeed < 0 ||
+                    this.y + this.radius == canvasHeight && this.ySpeed > 0)) {
+                    this.y += this.ySpeed;
+                }
+                if (this.x - this.radius + this.xSpeed < 0 || this.x + this.radius + this.xSpeed >= canvasWidth) {
+                    let x = -1 * this.xSpeed;
+                    let y = getNewBallSpeed(constants.ballXSpeed, this.ySpeed, this.y, constants.ballRadius, canvasHeight);
+                    this.setSpeed(x, y);
+                }
+                if (this.y - this.radius + this.ySpeed <= constants.ballRadius) {
+                    let x = getNewBallSpeed(constants.ballXSpeed, this.xSpeed, this.x, 0, canvasWidth);
+                    let y = this.ySpeed < 0 ? -1 * this.ySpeed : this.ySpeed;
+                    this.setSpeed(x, y);
+                }
+                else if (this.y + this.radius + this.ySpeed >= canvasHeight) {
+                    if (balls.length < 2) {
+                        stopGame();
+                    }
+                    else {
+                        const ballIndex = balls.indexOf(this);
+                        if (ballIndex !== -1) {
+                            balls.splice(ballIndex, 1);
+                        }
+                    }
+                }
+                ballPaddleCollision(this);
+                balls.forEach(ball => {
+                    if (ball.id !== this.id && !this.collisionProtection && !ball.collisionProtection) {
+                        ballBallCollision(this, ball);
+                        setTimeout(() => {
+                            this.collisionProtection = false;
+                            ball.collisionProtection = false;
+                        }, 250);
+                    }
+                });
+            }
+            this.setSpeed = function (x, y) {
+                this.xSpeed = x;
+                this.ySpeed = y;
+            }
+        }
+
+        function obstacleComponent(width, height, color, x, y) {
+            this.width = width;
+            this.height = height;
+            this.x = x;
+            this.y = y;
+            this.visible = true;
+            this.blockType = Math.random() <= 0.2 ? 'A' : 'B';
+            this.collided = false;
+            this.update = function () {
+                ctx = myGameArea.context;
+                if (this.visible) {
+                    ctx.drawImage(blockImg, this.x, this.y, constants.blockWidth, constants.blockHeight);
+                }
+                balls.forEach(ball => {
+                    if (this.visible) {
+                        if (obstacleBallCollision(this, ball)) {
+                            this.visible = false;
+                            this.collided = true;
+                            score += scoreModifier;
+                            if (gameMode === 1) {
+                                setTimeout(() => this.visible = true, 7000);
+                            }
+                        }
+                    }
+                });
+                if (this.collided) {
+                    if (this.blockType === 'B') {
+                        bBlocksCount++;
+                        if (bBlocksCount >= 10) {
+                            addNewBall();
+                            bBlocksCount = 0;
+                        }
+                    }
+                    else if (this.blockType === 'A') {
+                        if (drawnABonus()) {
+                            const bonusType = getBonusType(Math.floor(Math.random() * (6 - 1)) + 1);
+                            bonuses.push(new bonusComponent(50, 20, 'gold', this.x, this.y, bonusType));
+                        }
+                    }
+                    this.collided = false;
+                }
+            }
+        }
+
+        function bonusComponent(width, height, color, x, y, bonusType) {
+            this.id = Math.floor(Math.random() * 100000) + 1;
+            this.width = width;
+            this.height = height;
+            this.ySpeed = 2;
+            this.x = x;
+            this.y = y;
+            this.bonusType = bonusType;
+            this.collided = false;
+            this.label = bonusLabels.get(this.bonusType);
+            this.update = function () {
+                ctx = myGameArea.context;
+                ctx.fillStyle = color;
+                ctx.drawImage(bonusImg, this.x, this.y, this.width, this.height);
+                // ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.fillStyle = 'black';
+                ctx.font = 'bold 20px Comic Sans';
+                ctx.fillText(this.label, this.x + 15 - this.label.length, this.y + 20 - this.label.length);
+            }
+            this.newPos = function () {
+                this.y += this.ySpeed;
+                if (this.y > canvasHeight) {
+                    const index = bonuses.findIndex(bonus1 => this.id === bonus1.id);
+                    if (index > -1) {
+                        bonuses.splice(index, 1);
+                    }
+                }
+                else if (this.y + this.height > paddle.y) {
+                    if (!this.collided && this.x + this.width > paddle.x && this.x - this.width < paddle.x + paddle.width) {
+                        this.collided = true;
+                        applyBonus(this);
+                        setTimeout(()=> {this.collided = false}, 500);
+                    }
+                }
+            }
+        }
+
+        function scoreComponent(width, height, color, x, y) {
+            this.width = width;
+            this.height = height;
+            this.x = x;
+            this.y = y;
+            this.visible = true;
+            this.update = function () {
+                ctx = myGameArea.context;
+                ctx.font = "30px Arial";
+                ctx.fillStyle = color;
+                ctx.fillText(`Score: ${score}`, x, y);
+            }
+        }
+
+        function generateObstacleRow(shiftY) {
+            let blocks = [],
+                shiftX = 0;
+            for (let i = 0; i < 13; i++) {
+                blocks.push(new obstacleComponent(constants.blockWidth, constants.blockHeight, 'green', 20 + shiftX, 20 + shiftY));
+                shiftX += constants.blockWidth + 10;
+            }
+            return blocks;
+        }
+
+        function getNewObstacles() {
+            let shiftY = 0,
+                elements = [];
+
+            for (let j = 0; j < 3; j++) {
+                let row = generateObstacleRow(shiftY);
+                row.forEach(element => {
+                    elements.push(element);
+                });
+                shiftY += constants.blockHeight + 10;
+            }
+            return elements;
+        }
+
+        function addNewBall() {
+            balls.push(new ballComponent(constants.ballRadius, constants.ballXSpeed, constants.ballYSpeed, constants.ballX, constants.ballY, constants.ballColor));
+        }
+
+        function obstacleBallCollision(obstacle, ball) {
+            var obj1AddX = 0;
+            var obj2AddX = 0;
+            var obj1AddY = 0;
+            var obj2AddY = 0;
+            obj2AddX = ball.xSpeed;
+            obj2AddY = ball.ySpeed;
+            var xCollision = obstacle.x + obstacle.width + ball.xSpeed >= ball.x + ball.xSpeed && obstacle.x - obstacle.width + ball.xSpeed < ball.x + ball.radius + ball.xSpeed;
+            var yCollision = obstacle.y + obstacle.width + ball.ySpeed >= ball.y + ball.ySpeed && obstacle.y - obstacle.width + ball.ySpeed < ball.y + ball.radius + ball.ySpeed;
+            if (xCollision && yCollision) {
+                if (obstacle.y > ball.y + ball.radius || obstacle.y < ball.y) {
+                    var x = getNewBallSpeed(constants.ballXSpeed, obstacle.xSpeed, obstacle.x, ball.x, ball.x + ball.radius, true);
+                    var y = -1 * ball.ySpeed;
+                    ball.setSpeed(x, y);
+                }
+                else {
+                    var x = -1 * ball.xSpeed;
+                    var y = getNewBallSpeed(constants.ballXSpeed, obstacle.ySpeed, obstacle.y, ball.y, ball.y + ball.radius, true);
+                    ball.setSpeed(x, y);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        function ballBallCollision(ball, ball2) {
+            var obj1AddX = 0;
+            var obj2AddX = 0;
+            var obj1AddY = 0;
+            var obj2AddY = 0;
+            obj2AddX = ball2.xSpeed;
+            obj2AddY = ball2.ySpeed;
+            var xCollision = ball.x + ball.radius + ball2.xSpeed >= ball2.x + ball2.xSpeed && ball.x - ball.radius + ball2.xSpeed < ball2.x + ball2.radius + ball2.xSpeed;
+            var yCollision = ball.y + ball.radius + ball2.ySpeed >= ball2.y + ball2.ySpeed && ball.y - ball.radius + ball2.ySpeed < ball2.y + ball2.radius + ball2.ySpeed;
+            if (xCollision && yCollision) {
+                if (ball.y > ball2.y + ball2.radius || ball.y < ball2.y) {
+                    var x = getNewBallSpeed(constants.ballXSpeed, ball.xSpeed, ball.x, ball2.x, ball2.x + ball2.radius, true);
+                    var y = -1 * ball2.ySpeed;
+                    ball2.setSpeed(x, y);
+                }
+                else {
+                    var x = -1 * ball2.xSpeed;
+                    var y = getNewBallSpeed(constants.ballXSpeed, ball.ySpeed, ball.y, ball2.y, ball2.y + ball2.radius, true);
+                    ball2.setSpeed(x, y);
+                }
+                ball.collisionProtection = true;
+                ball2.collisionProtection = true;
+                return true;
+            }
+            return false;
+        }
+
+        function ballPaddleCollision(ball) {
+            if (ball && paddle) {
+                var xCollision = ball.x + ball.radius + ball.xSpeed > paddle.x && ball.x - ball.radius + ball.xSpeed < paddle.x + paddle.width;
+                var yCollision = ball.y + ball.radius + ball.ySpeed > paddle.y && ball.y - ball.radius + ball.ySpeed < paddle.y + paddle.height;
+                if (xCollision && yCollision && !ball.catched) {
+                    if (ballCached && mScore > mCatchScoreThr && maxBallCatches > 0) {
+                        ball.catched = true;
+                        ballCached = false;
+                        maxBallCatches -= 1;
+                        ball.setSpeed(0, 0);
+                    }
+                    else if (ball.y + ball.radius + ball.ySpeed > paddle.y) {
+                        var x = getNewBallSpeed(constants.ballXSpeed, ball.xSpeed, ball.x, paddle.x, paddle.x + constants.paddleWidth);
+                        var y = ball.ySpeed > 0 ? -1 * ball.ySpeed : ball.ySpeed;
+                        ball.setSpeed(x, y);
+                    }
+                    else {
+                        var x = -1 * ball.xSpeed;
+                        var y = getNewBallSpeed(constants.ballXSpeed, ball.ySpeed, ball.y, paddle.y, paddle.y + constants.paddleHeight);
+                        ball.setSpeed(x, y);
+                    }
+                    return true;
+                }
+                return false;
+            }
+            return false;
+        }
+
+        function getNewBallSpeed(speedModifier, currentBallSpeed, cord, bottomBorder, topBorder, force = false) {
+            const bouncePt = (cord - bottomBorder) / (topBorder - bottomBorder);
+            const sign = currentBallSpeed > 0 ? 1 : -1;
+            if (!force) {
+                if (bouncePt <= 0.1 || bouncePt >= 0.9) {
+                    return sign * speedModifier * 3.0;
+                } else if (bouncePt <= 0.3 || bouncePt >= 0.7) {
+                    return sign * speedModifier * 2.0;
+                } else if (bouncePt <= 0.4 || bouncePt >= 0.6) {
+                    return sign * speedModifier * 1.5;
+                } else {
+                    return sign * speedModifier;
+                }
+            } else {
+                return sign * speedModifier;
+            }
+        }
+
+        function drawnABonus() {
+            return Math.random() < 0.2;
+        }
+
+        function getBonusType(rollNumber) {
+            return bonusTypes.get(rollNumber);
+        }
+
+        function applyBonus(bonus) {
+            const index = bonuses.findIndex(bonus1 => bonus.id === bonus1.id);
+            if (bonus.bonusType === 'doublePoints') {
+                scoreModifier = 2;
+                setTimeout(() => { scoreModifier = 1 }, 5000);
+            } else if (bonus.bonusType === 'pentaPoints') {
+                scoreModifier = 5;
+                setTimeout(() => { scoreModifier = 1 }, 5000);
+            } else if (bonus.bonusType === 'reverseMovement') {
+                reverseMoves = true;
+                setTimeout(() => { reverseMoves = false }, 5000);
+            } else if (bonus.bonusType === 'shrinkPlatform') {
+                clearTimeout(paddleModiferTimeout);
+                if (paddle) {
+                    paddle.width = constants.paddleWidth * 0.8;
+                }
+                paddleModiferTimeout = setTimeout(() => {
+                    if(paddle) {
+                        paddle.width = constants.paddleWidth;
+                    }
+                }, 5000);
+            } else if (bonus.bonusType === 'growPlatform') {
+                clearTimeout(paddleModiferTimeout);
+                if (paddle) {
+                    paddle.width = constants.paddleWidth * 1.2;
+                }
+                paddleModiferTimeout = setTimeout(() => {
+                    if(paddle) {
+                        paddle.width = constants.paddleWidth;
+                    }
+                }, 5000);
+            }
+
+            if (index > -1) {
+                bonuses.splice(index, 1);
+            }
+
+        }
+
+        function updateGameArea() {
+            myGameArea.clear();
+            paddle.newPos();
+            paddle.update();
+            balls?.forEach(ball => {
+                ball?.newPos();
+                ball?.update();
+            });
+            obstacles?.forEach(element => element.update());
+            bonuses?.forEach(bonus => {
+                bonus?.newPos();
+                bonus?.update();
+            })
+            scoreBoard?.update();
+        }
+
+        function moveleft() {
+            paddle.speedX = -constants.paddleSpeed;
+        }
+
+        function moveright() {
+            paddle.speedX = constants.paddleSpeed;
+        }
+
+        function clearmove() {
+            if (paddle) {
+                paddle.speedX = 0;
+                paddle.ySpeed = 0;
+            }
+        }
+
+        function toggleGame(startID, stopID) {
+            const gameBtn = document.getElementById(startID),
+                label = startID === 'stopGame' ? 'START INFINITE' : 'START SLIDE';
+            if (gameMode) {
+                gameMode = 0;
+                myGameArea.stop();
+                document.getElementById(stopID).disabled = false;
+                gameBtn.innerHTML = label;
+            } else {
+                startGame(startID);
+                document.getElementById(stopID).disabled = true;
+                gameBtn.innerHTML = 'RESET';
+            }
+        }
+    </script>
+    <div id="canvas-container"></div>
+    <div id="button-container">
+        <button class="control-button" onmousedown="moveleft()" onmouseup="clearmove()"
+            ontouchstart="moveleft()">LEFT</button>
+        <button class="control-button" onmousedown="moveright()" onmouseup="clearmove()"
+            ontouchstart="moveright()">RIGHT</button><br><br>
+        <button class="control-button" id="stopGame" onclick="toggleGame('stopGame', 'stopGame1')">START
+            INFINITE</button>
+        <button class="control-button" id="stopGame1" onclick="toggleGame('stopGame1', 'stopGame')">START SLIDE</button>
+    </div>
+</body>
+
+</html>

@@ -222,11 +222,8 @@
                         let row = generateObstacleRow(0);
                         row.forEach(element => {
                             obstacles.push(element);
-                            if (element.y > canvasHeight - 50) {
-                                stopGame();
-                            }
                         });
-                    }, 10000);
+                    }, 500);
                 }
             },
             clear: function () {
@@ -378,6 +375,11 @@
                     }
                     this.collided = false;
                 }
+                if (gameMode === 2) {
+                    if (this.y > canvasHeight - constants.paddleHeight * 2) {
+                        stopGame();
+                    }
+                }
             }
         }
 
@@ -412,7 +414,7 @@
                     if (!this.collided && this.x + this.width > paddle.x && this.x - this.width < paddle.x + paddle.width) {
                         this.collided = true;
                         applyBonus(this);
-                        setTimeout(()=> {this.collided = false}, 500);
+                        setTimeout(() => { this.collided = false }, 500);
                     }
                 }
             }
@@ -583,7 +585,7 @@
                     paddle.width = constants.paddleWidth * 0.8;
                 }
                 paddleModiferTimeout = setTimeout(() => {
-                    if(paddle) {
+                    if (paddle) {
                         paddle.width = constants.paddleWidth;
                     }
                 }, 5000);
@@ -593,7 +595,7 @@
                     paddle.width = constants.paddleWidth * 1.2;
                 }
                 paddleModiferTimeout = setTimeout(() => {
-                    if(paddle) {
+                    if (paddle) {
                         paddle.width = constants.paddleWidth;
                     }
                 }, 5000);

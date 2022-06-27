@@ -357,7 +357,7 @@
                             this.collided = true;
                             score += scoreModifier;
                             if (gameMode === 1) {
-                                setTimeout(() => this.visible = true, 7000);
+                                setTimeout(() => this.visible = true, 20000);
                             }
                         }
                     }
@@ -365,7 +365,7 @@
                 if (this.collided) {
                     if (this.blockType === 'B') {
                         bBlocksCount++;
-                        if (bBlocksCount >= 10) {
+                        if (bBlocksCount >= 5) {
                             addNewBall();
                             bBlocksCount = 0;
                         }
@@ -467,8 +467,8 @@
             var obj2AddY = 0;
             obj2AddX = ball.xSpeed;
             obj2AddY = ball.ySpeed;
-            var xCollision = obstacle.x + obstacle.width + ball.xSpeed >= ball.x + ball.xSpeed && obstacle.x - obstacle.width + ball.xSpeed < ball.x + ball.radius + ball.xSpeed;
-            var yCollision = obstacle.y + obstacle.width + ball.ySpeed >= ball.y + ball.ySpeed && obstacle.y - obstacle.width + ball.ySpeed < ball.y + ball.radius + ball.ySpeed;
+            var xCollision = obstacle.x + obstacle.width >= ball.x + ball.xSpeed && obstacle.x - obstacle.width < ball.x + ball.radius + ball.xSpeed;
+            var yCollision = obstacle.y + obstacle.width >= ball.y + ball.ySpeed && obstacle.y - obstacle.width < ball.y + ball.radius + ball.ySpeed;
             if (xCollision && yCollision) {
                 if (obstacle.y > ball.y + ball.radius || obstacle.y < ball.y) {
                     var x = getNewBallSpeed(constants.ballXSpeed, obstacle.xSpeed, obstacle.x, ball.x, ball.x + ball.radius, true);
@@ -559,7 +559,7 @@
         }
 
         function drawnABonus() {
-            return Math.random() < 0.2;
+            return Math.random() < 0.5;
         }
 
         function getBonusType(rollNumber) {

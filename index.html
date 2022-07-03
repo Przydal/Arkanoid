@@ -100,9 +100,6 @@
         var blockImg = new Image();
         blockImg.src = 'block.png';
 
-        var ballImg = new Image();
-        ballImg.src = 'ball.png';
-
         var backgroundImg = new Image();
         backgroundImg.src = 'background.jpg';
 
@@ -646,6 +643,7 @@
                 myGameArea.stop();
                 document.getElementById(stopID).disabled = false;
                 gameBtn.innerHTML = label;
+                score = 0;
             } else {
                 startGame(startID);
                 document.getElementById(stopID).disabled = true;
